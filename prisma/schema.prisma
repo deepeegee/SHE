@@ -1,0 +1,93 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id         String   @id @default(cuid())
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  email      String   @unique
+  name       String
+  department String?
+  supervisor String?
+  isAdmin    Boolean  @default(false)
+
+  assets     Asset[]
+  votes      Vote[]
+  ballots    Ballot[]
+}
+
+model Asset {
+  id            String      @id @default(cuid())
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  ownerId       String
+  type          AssetType
+  title         String?
+  description   String?
+  blobPathRaw   String
+  blobPathMain  String?
+  blobPathThumb String?
+  status        AssetStatus @default(APPROVED)
+  likeCount     Int         @default(0)
+
+  owner         User        @relation(fields: [ownerId], references: [id])
+  votes         Vote[]
+}
+
+model Vote {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  userId    String
+  assetId   String
+
+  user      User   @relation(fields: [userId], references: [id])
+  asset     Asset  @relation(fields: [assetId], references: [id])
+
+  @@unique([userId, assetId])
+}
+
+model Ballot {
+  id          String      @id @default(cuid())
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  userId      String
+  category    AssetType
+  status      BallotStatus @default(DRAFT)
+  submittedAt DateTime?
+
+  user        User        @relation(fields: [userId], references: [id])
+  items       BallotItem[]
+}
+
+model BallotItem {
+  id        String   @id @default(cuid())
+  ballotId  String
+  assetId   String
+
+  ballot    Ballot   @relation(fields: [ballotId], references: [id])
+  asset     Asset    @relation(fields: [assetId], references: [id])
+
+  @@unique([ballotId, assetId])
+}
+
+enum AssetType { 
+  IMAGE 
+  VIDEO 
+}
+
+enum AssetStatus { 
+  PENDING 
+  APPROVED 
+  REJECTED 
+}
+
+enum BallotStatus { 
+  DRAFT 
+  SUBMITTED 
+}
