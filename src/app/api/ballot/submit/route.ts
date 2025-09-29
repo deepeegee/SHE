@@ -1,99 +1,62 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { z } from 'zod'
-import { prisma } from '@/lib/prisma'
-import { env } from '@/lib/env'
-import { authOptions } from '@/lib/auth'
+// src/app/api/ballot/submit/route.ts
+import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import { auth } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
+import { demoDb } from "@/lib/demoStore";
+import { PHOTOS_LIVE, VIDEOS_LIVE } from "@/lib/env";
 
-const submitSchema = z.object({
-  category: z.enum(['IMAGE', 'VIDEO']),
-})
+const Body = z.object({ category: z.enum(["IMAGE","VIDEO"]) });
 
-export async function POST(request: NextRequest) {
-  try {
-    const session = await getServerSession(authOptions)
-    if (!session?.user?.email) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+export async function POST(req: NextRequest) {
+  const session = await auth();
+  if (!session?.user?.email) return new NextResponse("Unauthorized", { status: 401 });
+  const { category } = Body.parse(await req.json());
+
+  if (category === "IMAGE" && !PHOTOS_LIVE) return new NextResponse("Photos voting closed", { status: 400 });
+  if (category === "VIDEO" && !VIDEOS_LIVE) return new NextResponse("Videos voting closed", { status: 400 });
+
+  if (process.env.DEMO_MODE === "true") {
+    const key = `${session.user.email}:${category}`;
+    const ballot = demoDb.ballots.get(key);
+    if (!ballot || ballot.status === "SUBMITTED") return new NextResponse("Already submitted or no draft", { status: 400 });
+    if (!ballot.items.length) return new NextResponse("Empty ballot", { status: 400 });
+    if (ballot.items.length > 5) return new NextResponse("Over limit", { status: 400 });
+
+    for (const id of ballot.items) {
+      const voteKey = `${session.user.email}:${id}`;
+      if (!demoDb.votes.has(voteKey)) {
+        demoDb.votes.add(voteKey);
+        const a = demoDb.assets.get(id);
+        if (a) { a.likeCount += 1; demoDb.assets.set(id, a); }
+      }
     }
-
-    const body = await request.json()
-    const { category } = submitSchema.parse(body)
-
-    // Check if voting is live for this category
-    if (category === 'IMAGE' && !env.PHOTOS_LIVE) {
-      return NextResponse.json({ error: 'Photo voting is not live' }, { status: 400 })
-    }
-    if (category === 'VIDEO' && !env.VIDEOS_LIVE) {
-      return NextResponse.json({ error: 'Video voting is not live' }, { status: 400 })
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { email: session.user.email },
-    })
-
-    if (!user) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 })
-    }
-
-    // Check if user already has votes in this category
-    const existingVotes = await prisma.vote.findFirst({
-      where: {
-        userId: user.id,
-        asset: { type: category },
-      },
-    })
-
-    if (existingVotes) {
-      return NextResponse.json({ error: 'Already submitted' }, { status: 400 })
-    }
-
-    const ballot = await prisma.ballot.findFirst({
-      where: {
-        userId: user.id,
-        category,
-        status: 'DRAFT',
-      },
-      include: { items: true },
-    })
-
-    if (!ballot || ballot.items.length === 0) {
-      return NextResponse.json({ error: 'No items to submit' }, { status: 400 })
-    }
-
-    // Create votes and update like counts
-    await prisma.$transaction(async (tx) => {
-      // Create votes
-      await tx.vote.createMany({
-        data: ballot.items.map((item) => ({
-          userId: user.id,
-          assetId: item.assetId,
-        })),
-        skipDuplicates: true,
-      })
-
-      // Update like counts
-      await tx.asset.updateMany({
-        where: {
-          id: { in: ballot.items.map((item) => item.assetId) },
-        },
-        data: {
-          likeCount: { increment: 1 },
-        },
-      })
-
-      // Mark ballot as submitted
-      await tx.ballot.update({
-        where: { id: ballot.id },
-        data: {
-          status: 'SUBMITTED',
-          submittedAt: new Date(),
-        },
-      })
-    })
-
-    return NextResponse.json({ success: true })
-  } catch (error) {
-    console.error('Ballot submit error:', error)
-    return NextResponse.json({ error: 'Invalid request' }, { status: 400 })
+    ballot.status = "SUBMITTED";
+    ballot.submittedAt = Date.now();
+    demoDb.ballots.set(key, ballot);
+    return NextResponse.json({ ok: true });
   }
+
+  const user = await prisma.user.findUnique({ where: { email: session.user.email } });
+  if (!user) return new NextResponse("Profile missing", { status: 400 });
+
+  const draft = await prisma.ballot.findFirst({
+    where: { userId: user.id, category, status: "DRAFT" }, include: { items: true }
+  });
+  if (!draft) return new NextResponse("No draft ballot", { status: 400 });
+  if (!draft.items.length) return new NextResponse("Empty ballot", { status: 400 });
+  if (draft.items.length > 5) return new NextResponse("Over limit", { status: 400 });
+
+  const submitted = await prisma.ballot.findFirst({ where: { userId: user.id, category, status: "SUBMITTED" } });
+  if (submitted) return new NextResponse("Already submitted", { status: 400 });
+
+  await prisma.$transaction(async (tx) => {
+    for (const it of draft.items) {
+      await tx.vote.create({ data: { userId: user.id, assetId: it.assetId } });
+      await tx.asset.update({ where: { id: it.assetId }, data: { likeCount: { increment: 1 } } });
+    }
+    await tx.ballot.update({ where: { id: draft.id }, data: { status: "SUBMITTED", submittedAt: new Date() } });
+  });
+
+  return NextResponse.json({ ok: true });
 }

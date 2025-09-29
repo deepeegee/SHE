@@ -111,7 +111,7 @@ export default function Admin() {
             
             {leaderboard.images.length > 0 ? (
               <div className="space-y-4">
-                {leaderboard.images.map((asset, index) => {
+                {leaderboard.images.map((asset: Asset, index: number) => {
                   const imageUrl = `https://${process.env.NEXT_PUBLIC_AZURE_STORAGE_ACCOUNT || 'your-storage-account'}.blob.core.windows.net/raw-images/${asset.blobPathRaw}`
                   
                   return (
@@ -172,7 +172,7 @@ export default function Admin() {
             
             {leaderboard.videos.length > 0 ? (
               <div className="space-y-4">
-                {leaderboard.videos.map((asset, index) => {
+                {leaderboard.videos.map((asset: Asset, index: number) => {
                   const videoUrl = `https://${process.env.NEXT_PUBLIC_AZURE_STORAGE_ACCOUNT || 'your-storage-account'}.blob.core.windows.net/raw-videos/${asset.blobPathRaw}`
                   
                   return (

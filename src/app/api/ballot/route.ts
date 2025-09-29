@@ -1,135 +1,79 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { z } from 'zod'
-import { prisma } from '@/lib/prisma'
-import { authOptions } from '@/lib/auth'
+// src/app/api/ballot/route.ts
+import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import { auth } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
+import { demoDb } from "@/lib/demoStore";
 
-const ballotSchema = z.object({
-  category: z.enum(['IMAGE', 'VIDEO']),
+const Patch = z.object({
+  category: z.enum(["IMAGE","VIDEO"]),
   assetId: z.string(),
-  action: z.enum(['add', 'remove']),
-})
+  action: z.enum(["add","remove"]),
+});
 
-export async function GET(request: NextRequest) {
-  try {
-    const session = await getServerSession(authOptions)
-    if (!session?.user?.email) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+export async function GET(req: NextRequest) {
+  const session = await auth();
+  if (!session?.user?.email) return new NextResponse("Unauthorized", { status: 401 });
+  const category = (req.nextUrl.searchParams.get("category") || "IMAGE").toUpperCase() as "IMAGE"|"VIDEO";
+
+  if (process.env.DEMO_MODE === "true") {
+    const key = `${session.user.email}:${category}`;
+    let ballot = demoDb.ballots.get(key);
+    if (!ballot) {
+      ballot = { id: crypto.randomUUID(), userId: `demo-${session.user.email}`, category, status: "DRAFT", items: [] };
+      demoDb.ballots.set(key, ballot);
     }
-
-    const { searchParams } = new URL(request.url)
-    const category = searchParams.get('category') as 'IMAGE' | 'VIDEO'
-
-    if (!category || !['IMAGE', 'VIDEO'].includes(category)) {
-      return NextResponse.json({ error: 'Invalid category' }, { status: 400 })
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { email: session.user.email },
-    })
-
-    if (!user) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 })
-    }
-
-    const ballot = await prisma.ballot.findFirst({
-      where: {
-        userId: user.id,
-        category,
-        status: 'DRAFT',
-      },
-      include: {
-        items: {
-          include: {
-            asset: {
-              include: {
-                owner: {
-                  select: { name: true, department: true, supervisor: true },
-                },
-              },
-            },
-          },
-        },
-      },
-    })
-
-    return NextResponse.json({ ballot })
-  } catch (error) {
-    console.error('Ballot GET error:', error)
-    return NextResponse.json({ error: 'Invalid request' }, { status: 400 })
+    return NextResponse.json({ ballot });
   }
+
+  const user = await prisma.user.findUnique({ where: { email: session.user.email } });
+  if (!user) return new NextResponse("Profile missing", { status: 400 });
+
+  const ballot = await prisma.ballot.findFirst({
+    where: { userId: user.id, category, status: "DRAFT" }, include: { items: true }
+  });
+  return NextResponse.json({ ballot });
 }
 
-export async function PATCH(request: NextRequest) {
-  try {
-    const session = await getServerSession(authOptions)
-    if (!session?.user?.email) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+export async function PATCH(req: NextRequest) {
+  const session = await auth();
+  if (!session?.user?.email) return new NextResponse("Unauthorized", { status: 401 });
+  const body = Patch.parse(await req.json());
 
-    const body = await request.json()
-    const { category, assetId, action } = ballotSchema.parse(body)
-
-    const user = await prisma.user.findUnique({
-      where: { email: session.user.email },
-    })
-
-    if (!user) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 })
-    }
-
-    let ballot = await prisma.ballot.findFirst({
-      where: {
-        userId: user.id,
-        category,
-        status: 'DRAFT',
-      },
-    })
-
+  if (process.env.DEMO_MODE === "true") {
+    const key = `${session.user.email}:${body.category}`;
+    let ballot = demoDb.ballots.get(key);
     if (!ballot) {
-      ballot = await prisma.ballot.create({
-        data: {
-          userId: user.id,
-          category,
-          status: 'DRAFT',
-        },
-      })
+      ballot = { id: crypto.randomUUID(), userId: `demo-${session.user.email}`, category: body.category, status: "DRAFT", items: [] };
+      demoDb.ballots.set(key, ballot);
     }
-
-    if (action === 'add') {
-      const existingItems = await prisma.ballotItem.count({
-        where: { ballotId: ballot.id },
-      })
-
-      if (existingItems >= 5) {
-        return NextResponse.json({ error: 'Maximum 5 items allowed' }, { status: 400 })
+    if (body.action === "add") {
+      if (!ballot.items.includes(body.assetId)) {
+        if (ballot.items.length >= 5) return new NextResponse("Limit reached (5)", { status: 400 });
+        ballot.items.push(body.assetId);
       }
-
-      await prisma.ballotItem.upsert({
-        where: {
-          ballotId_assetId: {
-            ballotId: ballot.id,
-            assetId,
-          },
-        },
-        update: {},
-        create: {
-          ballotId: ballot.id,
-          assetId,
-        },
-      })
     } else {
-      await prisma.ballotItem.deleteMany({
-        where: {
-          ballotId: ballot.id,
-          assetId,
-        },
-      })
+      ballot.items = ballot.items.filter(id => id !== body.assetId);
     }
-
-    return NextResponse.json({ success: true })
-  } catch (error) {
-    console.error('Ballot PATCH error:', error)
-    return NextResponse.json({ error: 'Invalid request' }, { status: 400 })
+    demoDb.ballots.set(key, ballot);
+    return NextResponse.json({ ballot });
   }
+
+  const user = await prisma.user.findUnique({ where: { email: session.user.email } });
+  if (!user) return new NextResponse("Profile missing", { status: 400 });
+
+  let ballot = await prisma.ballot.findFirst({
+    where: { userId: user.id, category: body.category, status: "DRAFT" }, include: { items: true }
+  });
+  if (!ballot) ballot = await prisma.ballot.create({ data: { userId: user.id, category: body.category } });
+
+  if (body.action === "add") {
+    const count = await prisma.ballotItem.count({ where: { ballotId: ballot.id } });
+    if (count >= 5) return new NextResponse("Limit reached (5)", { status: 400 });
+    await prisma.ballotItem.create({ data: { ballotId: ballot.id, assetId: body.assetId } });
+  } else {
+    await prisma.ballotItem.deleteMany({ where: { ballotId: ballot.id, assetId: body.assetId } });
+  }
+  const updated = await prisma.ballot.findUnique({ where: { id: ballot.id }, include: { items: true } });
+  return NextResponse.json({ ballot: updated });
 }

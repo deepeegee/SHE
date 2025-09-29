@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 
 export default function SignIn() {
   const [email, setEmail] = useState('')
+  const [name, setName] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const router = useRouter()
 
@@ -39,6 +40,16 @@ export default function SignIn() {
     }
   }
 
+  const handleDemoSignIn = async () => {
+    setIsLoading(true)
+    try {
+      await signIn('credentials', { name, email, callbackUrl: '/challenge' })
+    } catch (error) {
+      console.error('Demo sign in error:', error)
+      setIsLoading(false)
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
       <div className="max-w-md w-full bg-white rounded-lg shadow-lg p-8">
@@ -47,13 +58,37 @@ export default function SignIn() {
         </h1>
         
         <div className="space-y-4">
-          <button
-            onClick={handleAzureSignIn}
-            disabled={isLoading}
-            className="w-full bg-blue-600 text-white px-4 py-3 rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
-          >
-            {isLoading ? 'Signing in...' : 'Sign in with Microsoft'}
-          </button>
+          {(process.env.NEXT_PUBLIC_DEMO === 'true' || process.env.DEMO_MODE === 'true') ? (
+            <div className="space-y-2">
+              <input 
+                className="w-full border rounded px-3 py-2" 
+                placeholder="Full name" 
+                value={name} 
+                onChange={e => setName(e.target.value)} 
+              />
+              <input 
+                className="w-full border rounded px-3 py-2" 
+                placeholder="email@example.com" 
+                value={email} 
+                onChange={e => setEmail(e.target.value)} 
+              />
+              <button 
+                className="w-full px-4 py-2 border rounded" 
+                onClick={handleDemoSignIn}
+                disabled={isLoading || !name || !email}
+              >
+                {isLoading ? 'Signing in...' : 'Demo login'}
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={handleAzureSignIn}
+              disabled={isLoading}
+              className="w-full bg-blue-600 text-white px-4 py-3 rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
+            >
+              {isLoading ? 'Signing in...' : 'Sign in with Microsoft'}
+            </button>
+          )}
           
           <div className="relative">
             <div className="absolute inset-0 flex items-center">

@@ -1,50 +1,31 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { z } from 'zod'
-import { prisma } from '@/lib/prisma'
-import { authOptions } from '@/lib/auth'
+// src/app/api/feed/route.ts
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { demoDb } from "@/lib/demoStore";
 
-const feedSchema = z.object({
-  type: z.enum(['image', 'video']),
-  take: z.string().transform(Number).default('24'),
-  cursor: z.string().optional(),
-})
+export async function GET(req: NextRequest) {
+  const typeParam = (req.nextUrl.searchParams.get("type") || "image").toUpperCase();
+  const take = Number(req.nextUrl.searchParams.get("take") || 24);
+  const cursor = req.nextUrl.searchParams.get("cursor") || undefined;
 
-export async function GET(request: NextRequest) {
-  try {
-    const session = await getServerSession(authOptions)
-    if (!session?.user?.email) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const { searchParams } = new URL(request.url)
-    const { type, take, cursor } = feedSchema.parse({
-      type: searchParams.get('type'),
-      take: searchParams.get('take'),
-      cursor: searchParams.get('cursor'),
-    })
-
-    const assets = await prisma.asset.findMany({
-      where: {
-        type: type.toUpperCase() as 'IMAGE' | 'VIDEO',
-        status: 'APPROVED',
-      },
-      include: {
-        owner: {
-          select: { name: true, department: true, supervisor: true },
-        },
-      },
-      take,
-      ...(cursor && {
-        cursor: { id: cursor },
-        skip: 1,
-      }),
-      orderBy: { createdAt: 'desc' },
-    })
-
-    return NextResponse.json({ assets })
-  } catch (error) {
-    console.error('Feed error:', error)
-    return NextResponse.json({ error: 'Invalid request' }, { status: 400 })
+  if (process.env.DEMO_MODE === "true") {
+    const items = [...demoDb.assets.values()]
+      .filter(a => a.type === (typeParam === "IMAGE" ? "IMAGE" : "VIDEO"))
+      .sort((a,b) => a.createdAt - b.createdAt)
+      .slice(0, take);
+    return NextResponse.json({ items, nextCursor: null });
   }
+
+  const where = { status: "APPROVED", type: typeParam as "IMAGE"|"VIDEO" };
+  const items = await prisma.asset.findMany({
+    where, take, ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}), orderBy: { id: "asc" },
+    select: {
+      id: true, type: true, title: true, description: true,
+      blobPathRaw: true, blobPathMain: true, blobPathThumb: true,
+      likeCount: true, createdAt: true,
+      ownerNameAtUpload: true, ownerDepartmentAtUpload: true, ownerSupervisorAtUpload: true,
+    }
+  });
+  const nextCursor = items.length === take ? items[items.length - 1].id : null;
+  return NextResponse.json({ items, nextCursor });
 }

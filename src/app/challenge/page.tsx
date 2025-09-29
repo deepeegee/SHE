@@ -10,6 +10,7 @@ interface User {
   name: string
   department?: string
   supervisor?: string
+  isAdmin?: boolean
 }
 
 export default function Challenge() {

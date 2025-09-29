@@ -1,48 +1,53 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { z } from 'zod'
-import { prisma } from '@/lib/prisma'
-import { authOptions } from '@/lib/auth'
+// src/app/api/assets/ingest/route.ts
+import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import { auth } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
+import { demoDb } from "@/lib/demoStore";
 
-const ingestSchema = z.object({
-  kind: z.enum(['image', 'video']),
+const Body = z.object({
+  kind: z.enum(["image","video"]),
   title: z.string().optional(),
   description: z.string().optional(),
-  blobPathRaw: z.string(),
-})
+  blobPathRaw: z.string().min(1), // in DEMO this will be a data URL
+});
 
-export async function POST(request: NextRequest) {
-  try {
-    const session = await getServerSession(authOptions)
-    if (!session?.user?.email) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+export async function POST(req: NextRequest) {
+  const session = await auth();
+  if (!session?.user?.email) return new NextResponse("Unauthorized", { status: 401 });
+  const { kind, title, description, blobPathRaw } = Body.parse(await req.json());
 
-    const body = await request.json()
-    const { kind, title, description, blobPathRaw } = ingestSchema.parse(body)
-
-    const user = await prisma.user.findUnique({
-      where: { email: session.user.email },
-    })
-
-    if (!user) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 })
-    }
-
-    const asset = await prisma.asset.create({
-      data: {
-        ownerId: user.id,
-        type: kind.toUpperCase() as 'IMAGE' | 'VIDEO',
-        title,
-        description,
-        blobPathRaw,
-        status: 'APPROVED',
-      },
-    })
-
-    return NextResponse.json({ asset })
-  } catch (error) {
-    console.error('Asset ingest error:', error)
-    return NextResponse.json({ error: 'Invalid request' }, { status: 400 })
+  if (process.env.DEMO_MODE === "true") {
+    const id = crypto.randomUUID();
+    demoDb.assets.set(id, {
+      id,
+      type: kind === "image" ? "IMAGE" : "VIDEO",
+      title, description,
+      blobPathRaw,
+      likeCount: 0,
+      ownerId: `demo-${session.user.email}`,
+      ownerNameAtUpload: session.user.name ?? "",
+      ownerDepartmentAtUpload: null,
+      ownerSupervisorAtUpload: null,
+      createdAt: Date.now(),
+    });
+    return NextResponse.json({ id });
   }
+
+  const me = await prisma.user.findUnique({ where: { email: session.user.email } });
+  if (!me?.name) return new NextResponse("Complete profile first", { status: 400 });
+
+  const asset = await prisma.asset.create({
+    data: {
+      ownerId: me.id,
+      type: kind === "image" ? "IMAGE" : "VIDEO",
+      title, description,
+      blobPathRaw,
+      status: "APPROVED",
+      ownerNameAtUpload: me.name,
+      ownerDepartmentAtUpload: me.department ?? null,
+      ownerSupervisorAtUpload: me.supervisor ?? null,
+    },
+  });
+  return NextResponse.json({ id: asset.id });
 }

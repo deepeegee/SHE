@@ -40,52 +40,84 @@ export default function UploadClient() {
     setIsUploading(true)
 
     try {
-      // Get SAS URL
-      const sasResponse = await fetch('/api/upload/sas', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          kind: type,
-          mime: file.type,
-        }),
-      })
+      const isDemo = process.env.NEXT_PUBLIC_DEMO === 'true' || process.env.DEMO_MODE === 'true'
+      
+      if (isDemo) {
+        // Demo mode: convert file to data URL
+        const fr = new FileReader()
+        fr.onload = async () => {
+          try {
+            const ingestResponse = await fetch('/api/assets/ingest', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                kind: type,
+                title: formData.title || undefined,
+                description: formData.description || undefined,
+                blobPathRaw: fr.result as string,
+              }),
+            })
 
-      if (!sasResponse.ok) throw new Error('Failed to get upload URL')
+            if (!ingestResponse.ok) throw new Error('Failed to save asset')
 
-      const { sasUrl, blobName } = await sasResponse.json()
+            // Success - redirect to challenge
+            router.push('/challenge')
+          } catch (error) {
+            console.error('Upload error:', error)
+            alert('Upload failed. Please try again.')
+          } finally {
+            setIsUploading(false)
+          }
+        }
+        fr.readAsDataURL(file)
+      } else {
+        // Production mode: use Azure storage
+        // Get SAS URL
+        const sasResponse = await fetch('/api/upload/sas', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            kind: type,
+            mime: file.type,
+          }),
+        })
 
-      // Upload file to Azure
-      const uploadResponse = await fetch(sasUrl, {
-        method: 'PUT',
-        body: file,
-        headers: {
-          'x-ms-blob-type': 'BlockBlob',
-          'Content-Type': file.type,
-        },
-      })
+        if (!sasResponse.ok) throw new Error('Failed to get upload URL')
 
-      if (!uploadResponse.ok) throw new Error('Upload failed')
+        const { sasUrl, blobName } = await sasResponse.json()
 
-      // Ingest asset
-      const ingestResponse = await fetch('/api/assets/ingest', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          kind: type,
-          title: formData.title || undefined,
-          description: formData.description || undefined,
-          blobPathRaw: blobName,
-        }),
-      })
+        // Upload file to Azure
+        const uploadResponse = await fetch(sasUrl, {
+          method: 'PUT',
+          body: file,
+          headers: {
+            'x-ms-blob-type': 'BlockBlob',
+            'Content-Type': file.type,
+          },
+        })
 
-      if (!ingestResponse.ok) throw new Error('Failed to save asset')
+        if (!uploadResponse.ok) throw new Error('Upload failed')
 
-      // Success - redirect to challenge
-      router.push('/challenge')
+        // Ingest asset
+        const ingestResponse = await fetch('/api/assets/ingest', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            kind: type,
+            title: formData.title || undefined,
+            description: formData.description || undefined,
+            blobPathRaw: blobName,
+          }),
+        })
+
+        if (!ingestResponse.ok) throw new Error('Failed to save asset')
+
+        // Success - redirect to challenge
+        router.push('/challenge')
+      }
     } catch (error) {
       console.error('Upload error:', error)
       alert('Upload failed. Please try again.')
-    } finally {
       setIsUploading(false)
     }
   }

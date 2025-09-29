@@ -38,6 +38,7 @@ model Asset {
 
   owner         User        @relation(fields: [ownerId], references: [id])
   votes         Vote[]
+  ballotItems   BallotItem[]
 }
 
 model Vote {

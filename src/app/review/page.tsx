@@ -168,7 +168,7 @@ export default function Review() {
           </h2>
           
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {ballot.items.map((item) => {
+            {ballot.items.map((item: BallotItem) => {
               const asset = item.asset
               const mediaUrl = `https://${process.env.NEXT_PUBLIC_AZURE_STORAGE_ACCOUNT || 'your-storage-account'}.blob.core.windows.net/raw-${category}s/${asset.blobPathRaw}`
               

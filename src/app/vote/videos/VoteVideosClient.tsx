@@ -49,7 +49,7 @@ export default function VoteVideosClient() {
 
       if (assetsResponse.ok) {
         const data = await assetsResponse.json()
-        const shuffledAssets = shuffle(data.assets ?? [])
+        const shuffledAssets = shuffle((data.assets ?? []) as Asset[])
         setAssets(shuffledAssets)
       }
 
@@ -159,7 +159,7 @@ export default function VoteVideosClient() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-          {assets.map((asset) => {
+          {assets.map((asset: Asset) => {
             const isSelected = selectedIds.includes(asset.id)
             const videoUrl = `https://${process.env.NEXT_PUBLIC_AZURE_STORAGE_ACCOUNT || 'your-storage-account'}.blob.core.windows.net/raw-videos/${asset.blobPathRaw}`
             

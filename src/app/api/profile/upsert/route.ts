@@ -1,39 +1,45 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { z } from 'zod'
-import { prisma } from '@/lib/prisma'
-import { authOptions } from '@/lib/auth'
+// src/app/api/profile/upsert/route.ts
+import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import { prisma } from "@/lib/prisma";
+import { auth } from "@/lib/auth";
+import { demoDb } from "@/lib/demoStore";
 
-const upsertSchema = z.object({
+const Body = z.object({
   name: z.string().min(1),
-  department: z.string().optional(),
-  supervisor: z.string().optional(),
-})
+  // dept/supervisor may be sent by the form but are ignored server-side
+});
 
-export async function POST(request: NextRequest) {
-  try {
-    const session = await getServerSession(authOptions)
-    if (!session?.user?.email) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+export async function POST(req: NextRequest) {
+  const session = await auth();
+  if (!session?.user?.email) return new NextResponse("Unauthorized", { status: 401 });
 
-    const body = await request.json()
-    const { name, department, supervisor } = upsertSchema.parse(body)
+  const { name } = Body.parse(await req.json());
+  const useDemo = process.env.DEMO_MODE === "true";
 
-    const user = await prisma.user.upsert({
-      where: { email: session.user.email },
-      update: { name, department, supervisor },
-      create: {
-        email: session.user.email,
+  if (useDemo) {
+    const db = demoDb();
+    let user = [...db.users.values()].find(u => u.email === session.user!.email);
+    if (!user) {
+      user = {
+        id: `demo-${session.user!.email}`,
+        email: session.user!.email,
         name,
-        department,
-        supervisor,
-      },
-    })
-
-    return NextResponse.json({ user })
-  } catch (error) {
-    console.error('Profile upsert error:', error)
-    return NextResponse.json({ error: 'Invalid request' }, { status: 400 })
+        isAdmin: false,
+      };
+    } else {
+      user = { ...user, name };
+    }
+    db.users.set(user.id, user);
+    return NextResponse.json({ ok: true, user });
   }
+
+  // Real DB path
+  const user = await prisma.user.upsert({
+    where: { email: session.user.email },
+    create: { email: session.user.email, name },
+    update: { name },
+  });
+
+  return NextResponse.json({ ok: true, user });
 }
